@@ -1,79 +1,103 @@
 #include <stdlib.h>
 #include "board.h"
 
-// Predefined Boards
-static const char MATRIX_1[BOARD_ROWS][BOARD_COLS] = {
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {' ', ' ', 'S', ' ', ' ', ' ', 'S', ' '},
-        {' ', ' ', 'S', ' ', ' ', ' ', 'S', ' '},
-        {' ', ' ', 'S', ' ', ' ', ' ', 'S', ' '},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {'S', ' ', ' ', 'S', ' ', ' ', ' ', ' '},
-        {'S', ' ', ' ', 'S', ' ', ' ', ' ', ' '},
-        {'S', ' ', ' ', 'S', ' ', ' ', ' ', ' '}
-};
-static const char MATRIX_2[BOARD_ROWS][BOARD_COLS] = {
-        {'S', ' ', ' ', ' ', ' ', ' ', ' ', '~'},
-        {'S', ' ', 'S', ' ', ' ', ' ', ' ', ' '},
-        {'S', ' ', 'S', ' ', ' ', ' ', ' ', ' '},
-        {' ', ' ', 'S', ' ', ' ', ' ', ' ', 'S'},
-        {' ', ' ', ' ', ' ', ' ', ' ', '~', 'S'},
-        {' ', ' ', ' ', ' ', ' ', ' ', '~', 'S'},
-        {' ', 'S', 'S', ' ', ' ', ' ', ' ', ' '},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '}
-};
-static const char MATRIX_3[BOARD_ROWS][BOARD_COLS] = {
-        {' ', 'S', 'S', 'S', ' ', ' ', ' ', '~'},
-        {' ', ' ', ' ', ' ', '~', 'S', 'S', 'S'},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {' ', ' ', ' ', ' ', 'S', 'S', ' ', ' '},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {' ', ' ', 'S', 'S', 'S', 'S', ' ', ' '},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {'S', ' ', ' ', ' ', ' ', ' ', ' ', '~'}
-};
-static const char MATRIX_4[BOARD_ROWS][BOARD_COLS] = {
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {'S', 'S', 'S', 'S', 'S', 'S', 'S', 'S'},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '}
-};
-static const char MATRIX_5[BOARD_ROWS][BOARD_COLS] = {
-        {'S', ' ', 'S', ' ', ' ', ' ', '~', 'S'},
-        {' ', ' ', ' ', ' ', ' ', 'S', ' ', '~'},
-        {' ', ' ', 'S', ' ', ' ', ' ', ' ', '~'},
-        {' ', ' ', ' ', ' ', ' ', ' ', 'S', '~'},
-        {' ', ' ', ' ', 'S', ' ', ' ', ' ', '~'},
-        {' ', 'S', ' ', ' ', ' ', ' ', 'S', ' '},
-        {' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-        {'S', ' ', ' ', 'S', ' ', ' ', '~', 'S'}
-};
-
-static const char (*const PRESETS[NUM_OF_BOARDS])[BOARD_COLS] = {
-        MATRIX_1, MATRIX_2, MATRIX_3, MATRIX_4, MATRIX_5
-};
+#define MAX_PLACEMENT_ATTEMPTS 1000  // per ship
+#define MAX_FLEET_RESTARTS 100      // whole fleet, when a ship gets stuck
 
 // Index of cell (r, c) in the one-dimensional arrays
 static int idx(const Board *b, int r, int c) {
     return r * b->cols + c;
 }
 
-bool board_load_preset(Board *b, int boardNumber) {
-    if (boardNumber < 1 || boardNumber > NUM_OF_BOARDS) return false;
-    if (b->rows != BOARD_ROWS || b->cols != BOARD_COLS) return false;
+Board *board_create(int rows, int cols) {
+    if (rows <= 0 || cols <= 0) return NULL;
 
-    const char (*source)[BOARD_COLS] = PRESETS[boardNumber - 1];
-    for (int i = 0; i < b->rows; i++) {
-        for (int j = 0; j < b->cols; j++) {
-            b->cells[idx(b, i, j)] = source[i][j] == 'S' ? SHIP : EMPTY;
-            b->revealed[idx(b, i, j)] = HIDDEN;
-        }
+    Board *b = malloc(sizeof(Board));
+    if (b == NULL) return NULL;
+
+    b->rows = rows;
+    b->cols = cols;
+    b->cells = malloc((size_t)rows * (size_t)cols);
+    if (b->cells == NULL) {
+        free(b);
+        return NULL;
+    }
+    b->revealed = malloc((size_t)rows * (size_t)cols);
+    if (b->revealed == NULL) {
+        free(b->cells);
+        free(b);
+        return NULL;
+    }
+
+    for (int i = 0; i < rows * cols; i++) {
+        b->cells[i] = EMPTY;
+        b->revealed[i] = HIDDEN;
+    }
+    return b;
+}
+
+void board_destroy(Board *b) {
+    if (b == NULL) return;
+    free(b->cells);
+    free(b->revealed);
+    free(b);
+}
+
+static bool is_ship(const Board *b, int row, int col) {
+    return board_in_bounds(b, row, col) && b->cells[idx(b, row, col)] == SHIP;
+}
+
+// A ship fits if every cell is on the board, empty, and not side-by-side
+// with an existing ship
+static bool can_place(const Board *b, int row, int col, int length,
+                      bool horizontal) {
+    for (int k = 0; k < length; k++) {
+        int r = horizontal ? row : row + k;
+        int c = horizontal ? col + k : col;
+        if (!board_in_bounds(b, r, c) || is_ship(b, r, c)) return false;
+        if (is_ship(b, r + 1, c) || is_ship(b, r - 1, c) ||
+            is_ship(b, r, c + 1) || is_ship(b, r, c - 1)) return false;
     }
     return true;
+}
+
+// Try to place one ship at random positions; returns false if it never fits
+static bool place_ship(Board *b, int length) {
+    for (int attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
+        bool horizontal = rand() % 2;
+        int row = rand() % b->rows;
+        int col = rand() % b->cols;
+        if (!can_place(b, row, col, length, horizontal)) continue;
+
+        for (int k = 0; k < length; k++) {
+            int r = horizontal ? row : row + k;
+            int c = horizontal ? col + k : col;
+            b->cells[idx(b, r, c)] = SHIP;
+        }
+        return true;
+    }
+    return false;
+}
+
+int board_place_ships(Board *b, const int *lengths, int count, unsigned seed) {
+    for (int s = 0; s < count; s++) {
+        if (lengths[s] <= 0) return 0;
+    }
+
+    srand(seed);
+
+    // Earlier ships can leave no room for later ones, so start over
+    // with an empty board when a ship cannot be placed
+    for (int restart = 0; restart < MAX_FLEET_RESTARTS; restart++) {
+        for (int i = 0; i < b->rows * b->cols; i++) {
+            b->cells[i] = EMPTY;
+        }
+
+        int s = 0;
+        while (s < count && place_ship(b, lengths[s])) s++;
+        if (s == count) return 1;
+    }
+    return 0;
 }
 
 bool board_in_bounds(const Board *b, int row, int col) {

@@ -3,13 +3,8 @@
 #include "game.h"
 
 // Print functions
-static void print_welcome_message(void) {
-    printf("Welcome to Battleship!"
-           " Please enter board number:\n");
-}
-
-static void print_wrong_board_number(void) {
-    printf("Error in board number, try again\n");
+static void print_welcome_message(const Board *b) {
+    printf("Welcome to Battleship! Board size: %d x %d\n", b->rows, b->cols);
 }
 
 static void print_enter_position(void) {
@@ -31,39 +26,21 @@ static void print_winning_message(int n_submarines, int n_moves) {
 
 // Print the board as the opponent sees it
 static void print_board(const Board *b) {
-    printf("  ");
+    int width = b->rows > 10 ? 2 : 1;  // row labels go up to rows - 1
+
+    printf("%*s ", width, "");
     for (int j = 0; j < b->cols; j++) {
         printf(" %c", 'A' + j);
     }
     printf("\n");
 
     for (int i = 0; i < b->rows; i++) {
-        printf("%d ", i);
+        printf("%*d ", width, i);
         for (int j = 0; j < b->cols; j++) {
             printf("|%c", board_view(b, i, j));
         }
         printf("|\n");
     }
-}
-
-// Get board number from user
-static int read_board_number(void) {
-    int boardNumber;
-    while (1) {
-        if (scanf("%d", &boardNumber) != 1)  return -1;
-        if (boardNumber >= 1 && boardNumber <= NUM_OF_BOARDS) {
-            return boardNumber;
-        } else {
-            print_wrong_board_number();
-        }
-    }
-}
-
-bool game_select_board(Board *b) {
-    print_welcome_message();
-    int boardNumber = read_board_number();
-    if (boardNumber == -1) return false;
-    return board_load_preset(b, boardNumber);
 }
 
 int read_move(int *row, char *col) {
@@ -125,6 +102,8 @@ static bool process_turn(Player *p) {
 // Gameplay loop
 void game_play(Game *g) {
     Player *p = &g->players[g->current];
+    print_welcome_message(p->board);
+
     int totalShips = board_count_ships(p->board);
     if (totalShips < 0) {
         fprintf(stderr, "Out of memory\n");

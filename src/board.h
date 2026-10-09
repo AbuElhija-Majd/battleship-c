@@ -12,10 +12,6 @@
 #define HIT 'S'
 #define MISS '~'
 
-#define BOARD_ROWS 8
-#define BOARD_COLS 8
-#define NUM_OF_BOARDS 5
-
 typedef struct {
     int rows, cols;
     char *cells;     // ground truth: SHIP or EMPTY
@@ -24,9 +20,18 @@ typedef struct {
 
 typedef enum { SHOT_MISS, SHOT_HIT, SHOT_SUNK, SHOT_INVALID, SHOT_REPEAT } ShotResult;
 
-// Fill the board from preset 1..NUM_OF_BOARDS and hide every cell.
-// Returns false if the number is out of range or the board is not 8x8.
-bool board_load_preset(Board *b, int boardNumber);
+// Allocate a rows x cols board with every cell EMPTY and HIDDEN.
+// Returns NULL on invalid size or allocation failure.
+Board *board_create(int rows, int cols);
+
+// Free both arrays, then the struct. Safe to call with NULL.
+void board_destroy(Board *b);
+
+// Randomly place ships of the given lengths, horizontally or vertically.
+// Ships never overlap or touch side-to-side, so each ship stays a separate
+// connected group. Returns 1 on success, 0 if the fleet could not be placed
+// (board too small); the board is then partially filled.
+int board_place_ships(Board *b, const int *lengths, int count, unsigned seed);
 
 bool board_in_bounds(const Board *b, int row, int col);
 
