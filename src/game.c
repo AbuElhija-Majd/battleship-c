@@ -1,30 +1,16 @@
 #include <stdio.h>
+#include <string.h>
 #include <ctype.h>
 #include "game.h"
 
-// Print functions
-static void print_welcome_message(const Board *b) {
-    printf("Welcome to Battleship! Board size: %d x %d\n", b->rows, b->cols);
+static const int FLEET[] = {4, 3, 3, 2};
+#define FLEET_SIZE (int)(sizeof(FLEET) / sizeof(FLEET[0]))
+
+static void clear_screen(void) {
+    printf("\033[2J\033[H");
 }
 
-static void print_enter_position(void) {
-    printf("Please enter position:\n");
-}
-
-static void print_error_row_or_col(void) {
-    printf("Error in row or column - out of bound\n");
-}
-
-static void print_error_position_already_bombed(void) {
-    printf("This position was already bombed - try again!\n");
-}
-
-static void print_winning_message(int n_submarines, int n_moves) {
-    printf("Congratulations, Admiral!\nYou've successfully revealed "
-           "all %d submarines in %d moves!\n", n_submarines, n_moves);
-}
-
-// Print the board as the opponent sees it
+// Print a board as the opponent sees it
 static void print_board(const Board *b) {
     int width = b->rows > 10 ? 2 : 1;  // row labels go up to rows - 1
 
@@ -57,66 +43,126 @@ int read_move(int *row, char *col) {
     return 1;
 }
 
-// Returns false if input ended before a valid move was made
-static bool process_turn(Player *p) {
-    bool shouldPrintBoard = true;
-    // Local flag for controlling board printing
+// Discard the rest of the current input line. Returns false on EOF.
+static bool discard_line(void) {
+    int ch;
+    while ((ch = getchar()) != '\n' && ch != EOF);
+    return ch != EOF;
+}
 
-    while (1) {
-        if (shouldPrintBoard) print_board(p->board);
-        // Print the board only when allowed
-        print_enter_position();
+bool game_init(Game *g, int rows, int cols, unsigned seed) {
+    memset(g, 0, sizeof(*g));
 
-        // Get user input
-        int row;
-        char colChar;
-        int inputStatus = read_move(&row, &colChar);
-        if (inputStatus == -1) return false;
-        if (inputStatus == 0) {
-            shouldPrintBoard = false;
-            // Don't reprint the board for invalid input
-            continue;
+    for (int p = 0; p < 2; p++) {
+        Player *player = &g->players[p];
+        snprintf(player->name, sizeof(player->name), "Player %d", p + 1);
+
+        player->board = board_create(rows, cols);
+        if (player->board == NULL) {
+            fprintf(stderr, "Out of memory\n");
+            game_destroy(g);
+            return false;
         }
-
-        // Convert column character to index
-        int col = colChar - 'A';
-
-        ShotResult result = board_fire(p->board, row, col);
-        if (result == SHOT_INVALID) {
-            print_error_row_or_col();
-            shouldPrintBoard = false;
-            // Don't reprint the board for invalid position
-            continue;
+        if (!board_place_ships(player->board, FLEET, FLEET_SIZE,
+                               seed + (unsigned)p)) {
+            fprintf(stderr, "Board %dx%d is too small for the fleet\n",
+                    rows, cols);
+            game_destroy(g);
+            return false;
         }
-        if (result == SHOT_REPEAT) {
-            print_error_position_already_bombed();
-            shouldPrintBoard = false;
-            continue;
-        }
+    }
+    return true;
+}
 
-        p->moves++;
-        return true; // Exit the loop after a successful turn
+void game_destroy(Game *g) {
+    for (int p = 0; p < 2; p++) {
+        board_destroy(g->players[p].board);
+        g->players[p].board = NULL;
     }
 }
 
-// Gameplay loop
-void game_play(Game *g) {
-    Player *p = &g->players[g->current];
-    print_welcome_message(p->board);
+// Read moves until one is a real shot at target. Returns the result,
+// or SHOT_INVALID if input ended.
+static ShotResult take_shot(Board *target, bool *eof) {
+    *eof = false;
+    while (1) {
+        printf("Please enter position (e.g. 3 B):\n");
 
-    int totalShips = board_count_ships(p->board);
-    if (totalShips < 0) {
-        fprintf(stderr, "Out of memory\n");
-        return;
-    }
-
-    while (!board_all_sunk(p->board)) {
-        if (!process_turn(p)) {
-            return; // End of input - quit without a winner
+        int row;
+        char colChar;
+        int inputStatus = read_move(&row, &colChar);
+        if (inputStatus == -1) {
+            *eof = true;
+            return SHOT_INVALID;
         }
+        if (inputStatus == 0) {
+            printf("Invalid input - enter a row number and a column letter\n");
+            continue;
+        }
+
+        // Ignore anything typed after the move on the same line
+        if (!discard_line()) *eof = true;
+
+        ShotResult result = board_fire(target, row, colChar - 'A');
+        if (result == SHOT_INVALID) {
+            printf("Error in row or column - out of bound\n");
+        } else if (result == SHOT_REPEAT) {
+            printf("This position was already bombed - try again!\n");
+        } else {
+            return result;  // a real shot, even if input ends right after
+        }
+        if (*eof) return SHOT_INVALID;
+    }
+}
+
+static void print_result(ShotResult result) {
+    switch (result) {
+        case SHOT_MISS: printf("MISS.\n"); break;
+        case SHOT_HIT:  printf("HIT!\n"); break;
+        case SHOT_SUNK: printf("HIT! Ship sunk!\n"); break;
+        default: break;
+    }
+}
+
+void game_play(Game *g) {
+    const Board *any = g->players[0].board;
+
+    while (1) {
+        Player *shooter = &g->players[g->current];
+        Player *opponent = &g->players[1 - g->current];
+
+        clear_screen();
+        printf("Battleship %dx%d - %s's turn (move %d)\n\n",
+               any->rows, any->cols, shooter->name, shooter->moves + 1);
+        printf("%s's waters:\n", opponent->name);
+        print_board(opponent->board);
+
+        bool eof;
+        ShotResult result = take_shot(opponent->board, &eof);
+        if (result == SHOT_INVALID) break;  // input ended without a shot
+
+        shooter->moves++;
+        bool won = board_all_sunk(opponent->board);
+        if (won) board_reveal_all(opponent->board);
+
+        printf("\n");
+        print_board(opponent->board);
+        print_result(result);
+
+        if (won) {
+            printf("\n%s wins! All of %s's ships are sunk.\n",
+                   shooter->name, opponent->name);
+            printf("Moves: %s %d, %s %d\n",
+                   g->players[0].name, g->players[0].moves,
+                   g->players[1].name, g->players[1].moves);
+            return;
+        }
+        if (eof) break;
+
+        printf("Press Enter to pass the turn to %s...\n", opponent->name);
+        if (!discard_line()) break;
+        g->current = 1 - g->current;
     }
 
-    board_reveal_all(p->board);
-    print_board(p->board);
-    print_winning_message(totalShips, p->moves);
+    printf("\nInput ended - game over without a winner.\n");
 }

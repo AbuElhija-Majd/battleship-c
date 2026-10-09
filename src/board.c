@@ -108,76 +108,92 @@ char board_view(const Board *b, int row, int col) {
     return b->revealed[idx(b, row, col)];
 }
 
-// Helper function to perform flood-fill
-static void markConnectedCells(const Board *b, bool *visited,
-                               int row, int col) {
-    // Check boundaries and if the cell is a ship and not visited
-    if (!board_in_bounds(b, row, col) || visited[idx(b, row, col)]
-        || b->cells[idx(b, row, col)] != SHIP) {
-        return;
-    }
+// Breadth-first search over the ship cells connected to start (an index
+// into cells). Every cell reached is set to mark in seen; cells already
+// equal to mark are treated as visited. queue must hold rows * cols ints.
+// Returns the number of cells newly marked.
+static int flood_ship(const Board *b, int start, char *seen, char mark,
+                      int *queue) {
+    static const int dr[] = {1, -1, 0, 0};
+    static const int dc[] = {0, 0, 1, -1};
 
-    // Mark the current cell as visited
-    visited[idx(b, row, col)] = true;
+    if (b->cells[start] != SHIP || seen[start] == mark) return 0;
 
-    // Recursively visit all 4 adjacent cells
-    markConnectedCells(b, visited, row + 1, col); // Down
-    markConnectedCells(b, visited, row - 1, col); // Up
-    markConnectedCells(b, visited, row, col + 1); // Right
-    markConnectedCells(b, visited, row, col - 1); // Left
-}
+    int head = 0, tail = 0;
+    seen[start] = mark;
+    queue[tail++] = start;
 
-int board_count_ships(const Board *b) {
-    bool *visited = calloc((size_t)(b->rows * b->cols), sizeof(bool));
-    if (visited == NULL) return -1;
+    while (head < tail) {
+        int i = queue[head++];
+        int r = i / b->cols, c = i % b->cols;
 
-    int count = 0;
-    // Loop through every cell in the board
-    for (int i = 0; i < b->rows; i++) {
-        for (int j = 0; j < b->cols; j++) {
-            // If we find an unvisited ship cell, it's a new ship
-            if (b->cells[idx(b, i, j)] == SHIP && !visited[idx(b, i, j)]) {
-                count++;
-                markConnectedCells(b, visited, i, j);
-                // Mark all connected parts as visited
+        for (int k = 0; k < 4; k++) {
+            int nr = r + dr[k], nc = c + dc[k];
+            if (!board_in_bounds(b, nr, nc)) continue;
+
+            int j = idx(b, nr, nc);
+            if (b->cells[j] == SHIP && seen[j] != mark) {
+                seen[j] = mark;
+                queue[tail++] = j;
             }
         }
     }
+    return tail;  // every cell is pushed exactly once
+}
+
+static int *queue_create(const Board *b) {
+    return malloc((size_t)b->rows * (size_t)b->cols * sizeof(int));
+}
+
+int board_count_ships(const Board *b) {
+    char *visited = calloc((size_t)b->rows * (size_t)b->cols, 1);
+    int *queue = queue_create(b);
+    if (visited == NULL || queue == NULL) {
+        free(visited);
+        free(queue);
+        return -1;
+    }
+
+    int count = 0;
+    for (int i = 0; i < b->rows * b->cols; i++) {
+        // An unvisited ship cell starts a new ship
+        if (flood_ship(b, i, visited, 1, queue) > 0) count++;
+    }
+
     free(visited);
+    free(queue);
     return count;
 }
 
-// Helper function to reveal all connected ship cells
-static void revealConnectedShips(Board *b, int row, int col) {
-    // Check boundaries and if the cell is a ship
-    // and hidden on the display board
-    if (!board_in_bounds(b, row, col) ||
-        b->revealed[idx(b, row, col)] == HIT ||
-        b->cells[idx(b, row, col)] != SHIP) {
-        return;
-    }
+int board_reveal_ship(Board *b, int r, int c) {
+    if (!board_in_bounds(b, r, c)) return 0;
 
-    // Reveal the current cell on the display board
-    b->revealed[idx(b, row, col)] = HIT;
+    int *queue = queue_create(b);
+    if (queue == NULL) return -1;
 
-    // Recursively reveal all 4 adjacent cells
-    revealConnectedShips(b, row + 1, col); // Down
-    revealConnectedShips(b, row - 1, col); // Up
-    revealConnectedShips(b, row, col + 1); // Right
-    revealConnectedShips(b, row, col - 1); // Left
+    int revealed = flood_ship(b, idx(b, r, c), b->revealed, HIT, queue);
+    free(queue);
+    return revealed;
 }
 
-ShotResult board_fire(Board *b, int row, int col) {
-    if (!board_in_bounds(b, row, col)) return SHOT_INVALID;
-    if (b->revealed[idx(b, row, col)] != HIDDEN) return SHOT_REPEAT;
+ShotResult board_fire(Board *b, int r, int c) {
+    if (!board_in_bounds(b, r, c)) return SHOT_INVALID;
 
-    if (b->cells[idx(b, row, col)] == SHIP) {
-        // Use flood-fill to reveal the entire ship
-        revealConnectedShips(b, row, col);
-        return SHOT_SUNK;
+    int i = idx(b, r, c);
+    if (b->revealed[i] != HIDDEN) return SHOT_REPEAT;
+
+    if (b->cells[i] != SHIP) {
+        b->revealed[i] = MISS;
+        return SHOT_MISS;
     }
-    b->revealed[idx(b, row, col)] = MISS;
-    return SHOT_MISS;
+
+    // The first hit reveals the whole ship
+    if (board_reveal_ship(b, r, c) < 0) {
+        // Out of memory: still record the hit, just this one cell
+        b->revealed[i] = HIT;
+        return SHOT_HIT;
+    }
+    return SHOT_SUNK;
 }
 
 bool board_all_sunk(const Board *b) {

@@ -10,9 +10,6 @@
 #define MIN_SIZE 5
 #define MAX_SIZE 26  // columns are labeled A-Z
 
-static const int FLEET[] = {4, 3, 3, 2};
-#define FLEET_SIZE (int)(sizeof(FLEET) / sizeof(FLEET[0]))
-
 static void print_usage(const char *prog) {
     fprintf(stderr, "Usage: %s [rows] [cols] [seed]\n"
                     "  rows, cols: %d-%d (default %d)\n"
@@ -59,21 +56,11 @@ int main(int argc, char *argv[]) {
         seed = (unsigned)value;
     }
 
-    Board *board = board_create((int)rows, (int)cols);
-    if (board == NULL) {
-        fprintf(stderr, "Out of memory\n");
-        return 1;
-    }
-    if (!board_place_ships(board, FLEET, FLEET_SIZE, seed)) {
-        fprintf(stderr, "Board %ldx%ld is too small for the fleet\n",
-                rows, cols);
-        board_destroy(board);
-        return 1;
-    }
+    Game game;
+    if (!game_init(&game, (int)rows, (int)cols, seed)) return 1;
 
-    Game game = { .players = { { "Player 1", board, 0 } }, .current = 0 };
     game_play(&game);
 
-    board_destroy(board);
+    game_destroy(&game);
     return 0;
 }
