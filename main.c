@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 #define ROWS 8
 #define COLS 8
@@ -27,12 +28,12 @@ void initializeGameBoards(int boardNumber,char gameBoard[ROWS][COLS]
                           , char displayBoard[ROWS][COLS]);
 void playGame(char gameBoard[ROWS][COLS], char displayBoard[ROWS][COLS]
               , int totalShips);
-bool getUserInput(int *row, char *colChar);
+int getUserInput(int *row, char *colChar);
 bool validatePosition(int row, int col, char displayBoard[ROWS][COLS]);
 void updateGameState(char gameBoard[ROWS][COLS], char displayBoard[ROWS][COLS]
                      , int row, int col,
                      int *moves, int *revealedSubmarines);
-void processTurn(char gameBoard[ROWS][COLS], char displayBoard[ROWS][COLS]
+bool processTurn(char gameBoard[ROWS][COLS], char displayBoard[ROWS][COLS]
                  , int *moves, int *revealedSubmarines);
 void revealHiddenCells(char displayBoard[ROWS][COLS]);
 bool isValidPosition(int row, int col);
@@ -244,7 +245,10 @@ void playGame(char gameBoard[ROWS][COLS], char displayBoard[ROWS][COLS],
     int revealedSubmarines = 0;
 
     while (revealedSubmarines < totalShips) {
-        processTurn(gameBoard, displayBoard, &moves, &revealedSubmarines);
+        if (!processTurn(gameBoard, displayBoard, &moves,
+                         &revealedSubmarines)) {
+            return; // End of input - quit without a winner
+        }
     }
 
     revealHiddenCells(displayBoard);
@@ -252,11 +256,19 @@ void playGame(char gameBoard[ROWS][COLS], char displayBoard[ROWS][COLS],
     print_winning_message(totalShips, moves);
 }
 
-bool getUserInput(int *row, char *colChar) {
-    if (scanf("%d %c", row, colChar) != 2) {
-        return false;
+// Returns 1 = valid, 0 = malformed (retry), -1 = end of input (quit)
+int getUserInput(int *row, char *colChar) {
+    int res = scanf("%d %c", row, colChar);
+    if (res == EOF) return -1;
+    if (res != 2) {
+        // Discard the rest of the line so the bad input isn't re-read
+        int ch;
+        while ((ch = getchar()) != '\n' && ch != EOF);
+        if (ch == EOF) return -1;
+        return 0;
     }
-    return true;
+    *colChar = (char)toupper((unsigned char)*colChar);
+    return 1;
 }
 
 bool validatePosition(int row, int col, char displayBoard[ROWS][COLS]) {
@@ -286,7 +298,8 @@ void updateGameState(char gameBoard[ROWS][COLS], char displayBoard[ROWS][COLS],
 }
 
 
-void processTurn(char gameBoard[ROWS][COLS], char displayBoard[ROWS][COLS],
+// Returns false if input ended before a valid move was made
+bool processTurn(char gameBoard[ROWS][COLS], char displayBoard[ROWS][COLS],
                  int *moves, int *revealedSubmarines) {
     bool shouldPrintBoard = true;
     // Local flag for controlling board printing
@@ -299,7 +312,9 @@ void processTurn(char gameBoard[ROWS][COLS], char displayBoard[ROWS][COLS],
         // Get user input
         int row;
         char colChar;
-        if (!getUserInput(&row, &colChar)) {
+        int inputStatus = getUserInput(&row, &colChar);
+        if (inputStatus == -1) return false;
+        if (inputStatus == 0) {
             shouldPrintBoard = false;
             // Don't reprint the board for invalid input
             continue;
@@ -318,7 +333,7 @@ void processTurn(char gameBoard[ROWS][COLS], char displayBoard[ROWS][COLS],
         // Update game state
         updateGameState(gameBoard, displayBoard, row,
                         col, moves, revealedSubmarines);
-        break; // Exit the loop after a successful turn
+        return true; // Exit the loop after a successful turn
     }
 }
 
