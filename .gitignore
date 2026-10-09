@@ -1,1 +1,5 @@
+battleship
 battleship.exe
+test_board
+test_board.exe
+*.o
